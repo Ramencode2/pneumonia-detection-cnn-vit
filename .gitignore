@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+*.egg-info/
+dist/
+build/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# PyTorch models (large files)
+*.pth
+*.pt
+
+# Training logs
+logs/
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+__MACOSX/
+
+# Project specific
+data/chest_xray/
+models/*/best_model.pth
+models/*/final_model.pth
+
+# Keep structure but ignore large files
+!models/.gitkeep
+!data/.gitkeep

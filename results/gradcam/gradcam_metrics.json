@@ -1,0 +1,7 @@
+{
+    "avg_faithfulness": 0.025562743973569012,
+    "std_faithfulness": 0.05792227096819417,
+    "avg_lung_overlap": 0.03531770427831733,
+    "std_lung_overlap": 0.06814615822113722,
+    "num_samples": 20
+}
