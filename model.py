@@ -14,35 +14,67 @@ import config
 
 
 # ============================================================================
-# CNN Backbone (ResNet-18)
+# CNN Backbone (Flexible - ResNet-18, ResNet-50, DenseNet-121, EfficientNet)
 # ============================================================================
 
 class CNNBackbone(nn.Module):
     """
-    CNN backbone using pretrained ResNet-18
+    Flexible CNN backbone supporting ResNet-18, ResNet-50, DenseNet-121, EfficientNet-B0/B3
     Extracts local features and spatial patterns
     """
     
-    def __init__(self, pretrained: bool = True):
+    def __init__(self, backbone_name: str = 'resnet18', pretrained: bool = True):
         super().__init__()
         
-        # Load pretrained ResNet-18
-        resnet = models.resnet18(pretrained=pretrained)
+        self.backbone_name = backbone_name.lower()
+        self.is_timm_model = False  # Flag for timm models
         
-        # Remove the final FC layer
-        self.features = nn.Sequential(*list(resnet.children())[:-2])
-        
-        # Output: (batch_size, 512, 7, 7) for 224x224 input
-        self.out_channels = 512
+        if self.backbone_name == 'resnet18':
+            resnet = models.resnet18(pretrained=pretrained)
+            self.features = nn.Sequential(*list(resnet.children())[:-2])
+            self.out_channels = 512
+            
+        elif self.backbone_name == 'resnet50':
+            resnet = models.resnet50(pretrained=pretrained)
+            self.features = nn.Sequential(*list(resnet.children())[:-2])
+            self.out_channels = 2048
+            
+        elif self.backbone_name == 'densenet121':
+            densenet = models.densenet121(pretrained=pretrained)
+            self.features = densenet.features
+            self.out_channels = 1024
+            
+        elif self.backbone_name == 'efficientnet_b0':
+            # Load pretrained EfficientNet-B0 using timm
+            import timm
+            efficientnet = timm.create_model('efficientnet_b0', pretrained=pretrained, num_classes=0, global_pool='')
+            self.features = efficientnet
+            self.out_channels = 1280
+            self.is_efficientnet = True
+            
+        elif self.backbone_name == 'efficientnet_b3':
+            # Load pretrained EfficientNet-B3 using timm
+            import timm
+            efficientnet = timm.create_model('efficientnet_b3', pretrained=pretrained, num_classes=0, global_pool='')
+            self.features = efficientnet
+            self.out_channels = 1536
+            self.is_efficientnet = True
+            
+        else:
+            raise ValueError(f"Unsupported backbone: {backbone_name}. Choose 'resnet18', 'resnet50', 'densenet121', 'efficientnet_b0', or 'efficientnet_b3'")
         
     def forward(self, x):
         """
         Args:
             x: Input tensor (B, 3, H, W)
         Returns:
-            features: Feature maps (B, 512, 7, 7)
+            features: Feature maps (B, out_channels, H', W')
         """
-        return self.features(x)
+        features = self.features(x)
+        
+        # EfficientNet returns (B, C, H, W) directly
+        # ResNet/DenseNet also return (B, C, H, W)
+        return features
 
 
 # ============================================================================
@@ -96,16 +128,16 @@ class FeatureFusion(nn.Module):
     def forward(self, cnn_features, vit_features):
         """
         Args:
-            cnn_features: CNN output (B, 512, 7, 7)
-            vit_features: ViT output (B, 768)
+            cnn_features: CNN output (B, cnn_channels, H, W)
+            vit_features: ViT output (B, vit_features)
         Returns:
-            fused: Concatenated features (B, 1280)
+            fused: Concatenated features (B, cnn_channels + vit_features)
         """
         # Pool CNN features to global vector
-        cnn_pooled = self.gap(cnn_features).squeeze(-1).squeeze(-1)  # (B, 512)
+        cnn_pooled = self.gap(cnn_features).squeeze(-1).squeeze(-1)
         
         # Concatenate CNN and ViT features
-        fused = torch.cat([cnn_pooled, vit_features], dim=1)  # (B, 1280)
+        fused = torch.cat([cnn_pooled, vit_features], dim=1)
         
         return fused
 
@@ -148,13 +180,13 @@ class ClassificationHead(nn.Module):
 
 class HybridCNNViT(nn.Module):
     """
-    Hybrid model combining CNN (ResNet-18) and Vision Transformer
+    Hybrid model combining CNN and Vision Transformer
     
     Architecture:
         Input (3, 224, 224)
-            ├─> CNN Branch (ResNet-18) -> (512, 7, 7) -> GAP -> (512,)
-            └─> ViT Branch (ViT-Base) -> (768,)
-        Concatenate -> (1280,) -> Classification Head -> (1,)
+            ├─> CNN Branch -> (cnn_channels, H, W) -> GAP -> (cnn_channels,)
+            └─> ViT Branch -> (vit_features,)
+        Concatenate -> (cnn_channels + vit_features,) -> Classification Head -> (1,)
     """
     
     def __init__(self, 
@@ -164,15 +196,15 @@ class HybridCNNViT(nn.Module):
                  dropout: float = 0.3):
         """
         Args:
-            cnn_backbone: CNN model name (currently only 'resnet18' supported)
+            cnn_backbone: CNN model name ('resnet18', 'resnet50', 'densenet121', 'efficientnet_b0', 'efficientnet_b3')
             vit_backbone: ViT model name from timm
             pretrained: Whether to use pretrained weights
             dropout: Dropout rate in classification head
         """
         super().__init__()
         
-        # CNN branch
-        self.cnn = CNNBackbone(pretrained=pretrained)
+        # CNN branch - UPDATED: now passes backbone_name parameter
+        self.cnn = CNNBackbone(backbone_name=cnn_backbone, pretrained=pretrained)
         
         # ViT branch
         self.vit = ViTBackbone(model_name=vit_backbone, pretrained=pretrained)
@@ -199,23 +231,29 @@ class HybridCNNViT(nn.Module):
             logits: Raw scores (B, 1) - apply sigmoid for probabilities
         """
         # Extract features from both branches
-        cnn_features = self.cnn(x)  # (B, 512, 7, 7)
-        vit_features = self.vit(x)  # (B, 768)
+        cnn_features = self.cnn(x)
+        vit_features = self.vit(x)
         
         # Fuse features
-        fused_features = self.fusion(cnn_features, vit_features)  # (B, 1280)
+        fused_features = self.fusion(cnn_features, vit_features)
         
         # Classify
-        logits = self.classifier(fused_features)  # (B, 1)
+        logits = self.classifier(fused_features)
         
         return logits
     
     def get_gradcam_target_layer(self):
         """
         Returns the target layer for Grad-CAM visualization
-        For ResNet-18, this is the last convolutional layer (layer4)
         """
-        return self.cnn.features[-1]
+        if 'resnet' in self.cnn.backbone_name:
+            return self.cnn.features[-1]
+        elif 'densenet' in self.cnn.backbone_name:
+            return self.cnn.features[-1]
+        elif 'efficientnet' in self.cnn.backbone_name:
+            return self.cnn.features
+        else:
+            return self.cnn.features[-1]
 
 
 # ============================================================================
@@ -224,14 +262,14 @@ class HybridCNNViT(nn.Module):
 
 class CNNOnly(nn.Module):
     """
-    CNN-only baseline (ResNet-18)
+    CNN-only baseline
     For ablation study
     """
     
-    def __init__(self, pretrained: bool = True, dropout: float = 0.3):
+    def __init__(self, backbone_name: str = 'resnet18', pretrained: bool = True, dropout: float = 0.3):
         super().__init__()
         
-        self.cnn = CNNBackbone(pretrained=pretrained)
+        self.cnn = CNNBackbone(backbone_name=backbone_name, pretrained=pretrained)
         self.gap = nn.AdaptiveAvgPool2d(1)
         self.classifier = ClassificationHead(
             in_features=self.cnn.out_channels,
@@ -245,7 +283,14 @@ class CNNOnly(nn.Module):
         return logits
     
     def get_gradcam_target_layer(self):
-        return self.cnn.features[-1]
+        if 'resnet' in self.cnn.backbone_name:
+            return self.cnn.features[-1]
+        elif 'densenet' in self.cnn.backbone_name:
+            return self.cnn.features[-1]
+        elif 'efficientnet' in self.cnn.backbone_name:
+            return self.cnn.features
+        else:
+            return self.cnn.features[-1]
 
 
 class ViTOnly(nn.Module):
@@ -277,13 +322,15 @@ class ViTOnly(nn.Module):
 # ============================================================================
 
 def create_model(model_type: str = 'hybrid',
+                 cnn_backbone: str = None,
                  pretrained: bool = True,
-                 dropout: float = config.DROPOUT) -> nn.Module:
+                 dropout: float = None) -> nn.Module:
     """
     Factory function to create different model variants
     
     Args:
         model_type: One of 'hybrid', 'cnn_only', 'vit_only'
+        cnn_backbone: CNN backbone name ('resnet18', 'resnet50', 'densenet121', 'efficientnet_b0', 'efficientnet_b3')
         pretrained: Whether to use pretrained weights
         dropout: Dropout rate
     
@@ -291,20 +338,26 @@ def create_model(model_type: str = 'hybrid',
         model: PyTorch model
     """
     
+    # Use config defaults if not specified
+    if cnn_backbone is None:
+        cnn_backbone = config.CNN_BACKBONE
+    if dropout is None:
+        dropout = config.DROPOUT
+    
     if model_type == 'hybrid':
         model = HybridCNNViT(
-            cnn_backbone=config.CNN_BACKBONE,
+            cnn_backbone=cnn_backbone,
             vit_backbone=config.TRANSFORMER_BACKBONE,
             pretrained=pretrained,
             dropout=dropout
         )
         print(f"Created Hybrid CNN-ViT model")
-        print(f"  CNN: {config.CNN_BACKBONE}")
+        print(f"  CNN: {cnn_backbone}")
         print(f"  ViT: {config.TRANSFORMER_BACKBONE}")
         
     elif model_type == 'cnn_only':
-        model = CNNOnly(pretrained=pretrained, dropout=dropout)
-        print(f"Created CNN-only model ({config.CNN_BACKBONE})")
+        model = CNNOnly(backbone_name=cnn_backbone, pretrained=pretrained, dropout=dropout)
+        print(f"Created CNN-only model ({cnn_backbone})")
         
     elif model_type == 'vit_only':
         model = ViTOnly(
@@ -383,4 +436,4 @@ if __name__ == "__main__":
     
     print("\n" + "="*70)
     print("✓ All models created successfully!")
-    print("="*70)
+    print("="*70)   

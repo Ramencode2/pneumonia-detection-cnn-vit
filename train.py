@@ -189,12 +189,23 @@ def train_one_epoch(model: nn.Module,
             
             # Backward pass with gradient scaling
             scaler.scale(loss).backward()
+            
+            # ✅ ADDED: Gradient clipping for stability
+            if hasattr(config, 'USE_GRADIENT_CLIPPING') and config.USE_GRADIENT_CLIPPING:
+                scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=config.GRADIENT_CLIP_VALUE)
+            
             scaler.step(optimizer)
             scaler.update()
         else:
             outputs = model(images)
             loss = criterion(outputs, labels)
             loss.backward()
+            
+            # ✅ ADDED: Gradient clipping for CPU training
+            if hasattr(config, 'USE_GRADIENT_CLIPPING') and config.USE_GRADIENT_CLIPPING:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=config.GRADIENT_CLIP_VALUE)
+            
             optimizer.step()
         
         # Track metrics
@@ -323,8 +334,16 @@ def train_model(model_type: str = 'hybrid',
         lung_segmenter=lung_segmenter
     )
     
-    # Calculate class weights for imbalanced dataset
-    pos_weight = calculate_class_weights()
+    # ✅ UPDATED: Calculate class weights with override from config
+    pos_weight_calculated = calculate_class_weights()
+    
+    # Use config POS_WEIGHT if available, otherwise use calculated
+    if hasattr(config, 'POS_WEIGHT') and config.POS_WEIGHT is not None:
+        pos_weight = torch.tensor([config.POS_WEIGHT])
+        print(f"\n✓ Using manual POS_WEIGHT from config: {config.POS_WEIGHT}")
+    else:
+        pos_weight = pos_weight_calculated
+        print(f"\n✓ Using calculated pos_weight: {pos_weight.item():.4f}")
     
     # Create model
     print("\n" + "-"*70)
@@ -333,12 +352,13 @@ def train_model(model_type: str = 'hybrid',
     model = create_model(model_type, pretrained=pretrained)
     model = model.to(device)
     
-    # Loss function with advanced techniques
-    if ADVANCED_TRAINING:
+    # ✅ UPDATED: Loss function - Force weighted BCE for EfficientNet
+    if config.USE_FOCAL_LOSS and ADVANCED_TRAINING:
         criterion = get_loss_function(pos_weight=pos_weight.item())
     else:
+        # Use weighted BCE with pos_weight
         criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight.to(device))
-        print(f"\nLoss: BCEWithLogitsLoss (pos_weight={pos_weight.item():.4f})")
+        print(f"Using BCEWithLogitsLoss with pos_weight={pos_weight.item():.4f}")
     
     # Optimizer
     optimizer = AdamW(
@@ -381,7 +401,7 @@ def train_model(model_type: str = 'hybrid',
     else:
         print(f"Mixed Precision (AMP): Disabled")
     
-    # Mixup/CutMix augmentation setup
+    # ✅ UPDATED: Mixup/CutMix - respect config settings
     mixup_cutmix = None
     if ADVANCED_TRAINING and (config.USE_MIXUP or config.USE_CUTMIX):
         mixup_cutmix = MixupCutmix(
@@ -394,6 +414,12 @@ def train_model(model_type: str = 'hybrid',
         print(f"Mixup/CutMix: Enabled (mixup_alpha={config.MIXUP_ALPHA}, cutmix_alpha={config.CUTMIX_ALPHA})")
     else:
         print(f"Mixup/CutMix: Disabled")
+    
+    # ✅ ADDED: Gradient clipping info
+    if hasattr(config, 'USE_GRADIENT_CLIPPING') and config.USE_GRADIENT_CLIPPING:
+        print(f"Gradient Clipping: Enabled (max_norm={config.GRADIENT_CLIP_VALUE})")
+    else:
+        print(f"Gradient Clipping: Disabled")
     
     # Training history
     history = {
@@ -460,6 +486,10 @@ def train_model(model_type: str = 'hybrid',
               f"AUC: {val_metrics['auc']:.4f}, F1: {val_metrics['f1']:.4f}")
         print(f"LR: {current_lr:.6f}")
         
+        # ✅ ADDED: Print class distribution in predictions (debugging)
+        print(f"Val Predictions - Mean: {np.mean(val_metrics.get('predictions', [0.5])):.4f}, "
+              f"Std: {np.std(val_metrics.get('predictions', [0.5])):.4f}")
+        
         # Save best model
         if val_metrics['loss'] < best_val_loss:
             best_val_loss = val_metrics['loss']
@@ -478,6 +508,8 @@ def train_model(model_type: str = 'hybrid',
             
             torch.save(checkpoint, os.path.join(save_dir, 'best_model.pth'))
             print(f"✓ Saved best model (val_loss: {best_val_loss:.4f})")
+        else:
+            print(f"Validation loss did not improve ({early_stopping.counter}/{config.EARLY_STOPPING_PATIENCE})")
         
         # Early stopping check
         if early_stopping(val_metrics['loss']):
@@ -511,7 +543,8 @@ def train_model(model_type: str = 'hybrid',
             'use_lung_mask': use_lung_mask,
             'pretrained': pretrained,
             'learning_rate': learning_rate,
-            'batch_size': batch_size
+            'batch_size': batch_size,
+            'pos_weight': pos_weight.item()
         }
     }
     torch.save(final_checkpoint, os.path.join(save_dir, 'final_model.pth'))
@@ -537,25 +570,37 @@ if __name__ == "__main__":
     
     try:
         print("\n" + "="*70)
-        print("🚀 TRAINING WITH ADVANCED TECHNIQUES")
+        print("🚀 TRAINING WITH OPTIMIZED SETTINGS")
         print("="*70)
         print("\nEnabled Features:")
-        print("  ✓ Focal Loss + Label Smoothing")
-        print("  ✓ Mixup/CutMix Augmentation")
-        print("  ✓ Advanced Data Augmentation")
-        print("  ✓ Cosine Annealing LR Schedule")
-        print("  ✓ Learning Rate Warmup")
-        print("  ✓ Mixed Precision (AMP)")
+        if config.USE_FOCAL_LOSS:
+            print(f"  ✓ Focal Loss (α={config.FOCAL_ALPHA}, γ={config.FOCAL_GAMMA})")
+        else:
+            print(f"  ✓ Weighted BCE Loss (pos_weight={config.POS_WEIGHT})")
+        if config.USE_LABEL_SMOOTHING:
+            print(f"  ✓ Label Smoothing (ε={config.LABEL_SMOOTHING})")
+        if config.USE_MIXUP:
+            print(f"  ✓ Mixup Augmentation (α={config.MIXUP_ALPHA})")
+        if config.USE_CUTMIX:
+            print(f"  ✓ CutMix Augmentation (α={config.CUTMIX_ALPHA})")
+        if config.USE_ADVANCED_AUG:
+            print(f"  ✓ Advanced Data Augmentation")
+        if config.USE_COSINE_ANNEALING:
+            print(f"  ✓ Cosine Annealing LR (T_max={config.COSINE_T_MAX})")
+        if config.USE_WARMUP:
+            print(f"  ✓ Learning Rate Warmup ({config.WARMUP_EPOCHS} epochs)")
+        if config.USE_AMP:
+            print(f"  ✓ Mixed Precision Training (2-3x speedup)")
+        if hasattr(config, 'USE_GRADIENT_CLIPPING') and config.USE_GRADIENT_CLIPPING:
+            print(f"  ✓ Gradient Clipping (max_norm={config.GRADIENT_CLIP_VALUE})")
         print("="*70 + "\n")
         
         # Train hybrid model
-        # Note: Using pretrained=False to avoid download interruptions
-        # The model will learn from scratch with advanced techniques
         results = train_model(
             model_type='hybrid',
             use_lung_mask=False,
-            pretrained=False,  # Avoid pretrained weight download issues
-            num_epochs=config.NUM_EPOCHS,  # Use config value
+            pretrained=True,
+            num_epochs=config.NUM_EPOCHS,
             device='cuda' if torch.cuda.is_available() else 'cpu'
         )
         
