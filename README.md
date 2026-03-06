@@ -125,6 +125,6 @@ All hyperparameters and paths are in `config.py`. Key parameters:
 - Designed for B.Tech project scope
 
 ## Authors
-**Aditya Chowdhary**
-**Ishan Dey**
-**Agnideep Ghorai**
+- **Aditya Chowdhary**
+- **Ishan Dey**
+- **Agnideep Ghorai**
