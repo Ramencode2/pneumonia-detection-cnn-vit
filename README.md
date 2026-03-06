@@ -188,6 +188,6 @@ All hyperparameters are in `config.py`. Key parameters:
 
 ## Authors
 
-- **Aditya Chowdhary**
+- **Aditya Choudhary**
 - **Ishan Dey**
 - **Agnideep Ghorai**
