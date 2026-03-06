@@ -123,3 +123,8 @@ All hyperparameters and paths are in `config.py`. Key parameters:
 - Single GPU or Google Colab compatible
 - All code is modular and commented
 - Designed for B.Tech project scope
+
+## Authors
+**Aditya Chowdhary**
+**Ishan Dey**
+**Agnideep Ghorai**
