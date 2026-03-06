@@ -1,33 +1,41 @@
 # Robust and Explainable Pneumonia Detection from Chest X-rays
 
-**Final Year B.Tech Project**
+**B.Tech Final Year Project**
 
 ## Project Overview
-Binary classification of chest X-rays into NORMAL vs PNEUMONIA using hybrid CNN–Vision Transformer models with lung-aware processing and explainability.
+
+Binary classification of chest X-rays into NORMAL vs PNEUMONIA using a hybrid CNN-Vision Transformer architecture with lung-aware processing and multi-method explainability.
+
+**Key Results (Test Set - 624 images):**
+
+| Metric | Value |
+|--------|-------|
+| Accuracy | 88.14% |
+| Precision | 93.89% |
+| Recall | 86.67% |
+| F1 Score | 90.13% |
+| AUC-ROC | 95.87% |
+| Specificity | 90.60% |
 
 ## Dataset
+
 **Kaggle Chest X-ray Pneumonia Dataset**
 - Download from: https://www.kaggle.com/datasets/paultimothymooney/chest-xray-pneumonia
 - Extract to: `data/chest_xray/`
 
 ### Expected Directory Structure
 ```
-Pneumonia detection/
-├── data/
-│   └── chest_xray/
-│       ├── train/
-│       │   ├── NORMAL/
-│       │   └── PNEUMONIA/
-│       ├── val/
-│       │   ├── NORMAL/
-│       │   └── PNEUMONIA/
-│       └── test/
-│           ├── NORMAL/
-│           └── PNEUMONIA/
-├── config.py
-├── dataset.py
-├── requirements.txt
-└── README.md
+data/
+└── chest_xray/
+    ├── train/
+    │   ├── NORMAL/
+    │   └── PNEUMONIA/
+    ├── val/
+    │   ├── NORMAL/
+    │   └── PNEUMONIA/
+    └── test/
+        ├── NORMAL/
+        └── PNEUMONIA/
 ```
 
 ## Installation
@@ -46,85 +54,140 @@ pip install -r requirements.txt
 python dataset.py
 ```
 
-4. **Evaluate a trained model:**
+## Usage
+
+### Train a model
+```bash
+python run_training.py
+# or directly:
+python train.py
+```
+
+### Evaluate a trained model
 ```bash
 python evaluate.py models/MODEL_DIR/best_model.pth MODEL_TYPE
 ```
 Example:
 ```bash
-python evaluate.py models/hybrid_20251219_120000/best_model.pth hybrid
+python evaluate.py models/hybrid_20260104_225847/best_model.pth hybrid
 ```
 
-## Project Pipeline
+### Visualize training history
+```bash
+python visualize_training.py
+```
 
-### ✓ Step 1: Dataset Loading and Preprocessing
-- [x] Dataset loader with proper directory structure
-- [x] Image preprocessing (resize, normalize)
-- [x] Data augmentation with style randomization
-- [x] Train/Val/Test data loaders
+### Explain predictions
+```bash
+# Single image
+python explain_prediction.py --image path/to/xray.jpg
 
-### ✓ Step 2: Lung Segmentation/Masking
-- [x] Lung segmentation model (U-Net architecture)
-- [x] CV-based fallback segmentation
-- [x] Preprocessing with lung masks
-- [x] Integration with dataset loader
+# Batch processing
+python explain_prediction.py --batch --data-dir data/chest_xray/test/PNEUMONIA/ --max-samples 20
 
-### ✓ Step 3: Hybrid CNN–Transformer Model
-- [x] CNN backbone (ResNet-18)
-- [x] Vision Transformer integration (ViT-Base)
-- [x] Hybrid architecture with feature fusion
-- [x] Baseline models for ablation (CNN-only, ViT-only)
+# Compare two cases
+python explain_prediction.py --compare normal.jpg pneumonia.jpg
+```
 
-### ✓ Step 4: Training Pipeline
-- [x] Training loop with BCEWithLogitsLoss
-- [x] Validation loop
-- [x] Early stopping
-- [x] Model checkpointing
-- [x] Learning rate scheduling
-- [x] Metrics tracking (Loss, Acc, AUC, F1)
-- [x] Training visualization
+### View results
+```bash
+python show_all_results.py
+```
 
-### ✓ Step 5: Evaluation
-- [x] Comprehensive metrics (Acc, Prec, Recall, F1, AUC, Specificity)
-- [x] Confusion matrix visualization
-- [x] ROC curve plotting
-- [x] Classification report
-- [x] Test set evaluation
-- [x] Model comparison utilities
+## Architecture
 
-### Step 6: Explainability (Grad-CAM)
-- [ ] Grad-CAM implementation
-- [ ] Heatmap generation
-- [ ] Faithfulness evaluation
-- [ ] Lung-overlap score
+### Hybrid CNN-ViT Model
 
-### Step 7: Ablation Study
-- [ ] CNN only
-- [ ] ViT only
-- [ ] Hybrid CNN–ViT
-- [ ] With vs without lung masking
+The model combines two complementary approaches via feature fusion:
 
-## Current Status
-✓ Step 1 completed: Dataset loading and preprocessing ready
-✓ Step 2 completed: Lung segmentation implemented
-✓ Step 3 completed: Hybrid CNN-ViT model architecture ready
-✓ Step 4 completed: Training pipeline with early stopping and checkpointing
-✓ Step 5 completed: Comprehensive evaluation with metrics and visualizations
+- **CNN Backbone (EfficientNet-B0):** Extracts local spatial features (edges, textures, consolidation patterns)
+- **ViT Backbone (ViT-Base):** Captures global context and long-range dependencies across the image
+- **Fusion Module:** Concatenates CNN and ViT feature vectors
+- **Classification Head:** Binary classification with dropout regularization
+
+Baseline models (CNN-only, ViT-only) are also available for ablation comparisons.
+
+### Training Pipeline
+
+- **Loss:** BCEWithLogitsLoss with class weighting (pos_weight=2.5)
+- **Optimizer:** AdamW (lr=3e-4, weight_decay=1e-4)
+- **LR Schedule:** Cosine annealing with warmup (3 epochs)
+- **Regularization:** Early stopping (patience=10), gradient clipping, dropout
+- **Optional:** Focal Loss, Label Smoothing, Mixup, CutMix, RandAugment (configurable in `config.py`)
+
+### Explainability (7 Methods)
+
+1. **Grad-CAM** - Visual heatmaps showing important regions
+2. **Attention Visualization** - ViT attention patterns across layers/heads
+3. **Saliency Maps** - Pixel-level importance via input gradients
+4. **Feature Importance** - CNN vs ViT contribution analysis
+5. **Natural Language Explanations** - Human-readable clinical reports
+6. **Anatomical Region Identification** - Maps activations to lung regions
+7. **Confidence Indicators** - Prediction probability with uncertainty flags
+
+### Bias Mitigation
+
+- **Lung Segmentation:** U-Net architecture + CV-based fallback (Otsu + morphology) to focus model attention on lung regions
+- **Class Weighting:** Addresses training data imbalance (1,341 Normal vs 3,875 Pneumonia)
+
+## Project Structure
+
+```
+pneumonia-detection-cnn-vit/
+├── config.py                  # All hyperparameters and paths
+├── dataset.py                 # Data loading, preprocessing, augmentation
+├── model.py                   # Hybrid CNN-ViT, CNN-only, ViT-only models
+├── train.py                   # Training loop with early stopping
+├── evaluate.py                # Evaluation metrics and visualization
+├── run_training.py            # Training entry point with error handling
+├── explainability.py          # 7 explainability methods
+├── gradcam.py                 # Grad-CAM heatmaps and faithfulness
+├── explain_prediction.py      # CLI for single/batch image explanation
+├── advanced_augmentation.py   # Mixup, CutMix, RandAugment, TTA
+├── advanced_losses.py         # Focal Loss, Label Smoothing
+├── lung_segmentation.py       # U-Net and CV-based lung segmentation
+├── ablation_study.py          # CNN vs ViT vs Hybrid comparison
+├── visualize_training.py      # Training history plots
+├── show_all_results.py        # Display evaluation and Grad-CAM results
+├── requirements.txt           # Python dependencies
+├── FINAL_RESULTS.md           # Detailed performance report
+├── models/                    # Saved model checkpoints
+└── results/                   # Evaluation outputs and visualizations
+    ├── evaluation/            # Metrics, confusion matrix, ROC curve
+    ├── gradcam/               # Grad-CAM heatmap samples
+    ├── training_plots/        # Training/validation curves
+    ├── segmentation_samples/  # Lung segmentation examples
+    └── explainability_demo/   # Example explanations
+```
 
 ## Configuration
-All hyperparameters and paths are in `config.py`. Key parameters:
-- Image size: 224×224
-- Batch size: 32
-- CNN backbone: ResNet-18
-- Transformer: ViT-Base
-- Learning rate: 1e-4
 
-## Notes
-- Single GPU or Google Colab compatible
-- All code is modular and commented
-- Designed for B.Tech project scope
+All hyperparameters are in `config.py`. Key parameters:
+
+| Parameter | Value | Description |
+|-----------|-------|-------------|
+| Image size | 224x224 | Standard for pretrained models |
+| Batch size | 32 | Adjust based on GPU memory |
+| CNN backbone | EfficientNet-B0 | 1,280 output channels |
+| Transformer | ViT-Base (patch16) | 768 features |
+| Learning rate | 3e-4 | Optimized for EfficientNet |
+| Epochs | 20 | With early stopping (patience=10) |
+| Pos weight | 2.5 | Class imbalance correction |
+
+## Requirements
+
+- Python 3.8+
+- PyTorch 2.0+
+- timm 0.9+
+- See `requirements.txt` for full list
+
+**Hardware:**
+- Minimum: 8GB RAM, CPU (slow but works)
+- Recommended: GPU with 8GB+ VRAM
+- Alternative: Google Colab / Kaggle Notebooks (free GPU)
 
 ## Authors
+
 - **Aditya Chowdhary**
 - **Ishan Dey**
 - **Agnideep Ghorai**
